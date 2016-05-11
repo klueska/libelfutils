@@ -57,10 +57,13 @@ int main(int argc, char **argv)
             elf_errmsg(-1));
     }
 
-    uintptr_t sonameptr;
-    uintptr_t strtabptr;
-
     size_t num_entries = data->d_size/sizeof(GElf_Dyn);
+
+    uintptr_t strtabptr;
+    uintptr_t sonameptr;
+    uintptr_t depptr[num_entries];
+    size_t numdeps = 0;
+
     for (int i = 0; i < num_entries; i++) {
         GElf_Dyn dyn;
         if (gelf_getdyn(data, i, &dyn) == NULL) {
@@ -69,11 +72,14 @@ int main(int argc, char **argv)
         }
 
         switch (dyn.d_tag) {
+            case DT_STRTAB:
+                strtabptr = dyn.d_un.d_ptr;
+                break;
             case DT_SONAME:
                 sonameptr = dyn.d_un.d_ptr;
                 break;
-            case DT_STRTAB:
-                strtabptr = dyn.d_un.d_ptr;
+            case DT_NEEDED:
+                depptr[numdeps++] = dyn.d_un.d_ptr;
                 break;
         }
     }
@@ -96,8 +102,20 @@ int main(int argc, char **argv)
             elf_errmsg(-1));
     }
 
-    printf("soname: %s\n", soname);
+    char *dep[numdeps];
+    for (int i = 0; i < numdeps;  i++) {
+        dep[i] = elf_strptr(e, strtabndx, depptr[i]);
+        if (dep[i] == NULL) {
+            errx(EXIT_FAILURE, "elf_strptr() failed: %s.",
+                elf_errmsg(-1));
+        }
+    }
         
+    printf("soname: %s\n", soname);
+    for (int i = 0; i < numdeps;  i++) {
+        printf("dep[%d]: %s\n", i, dep[i]);
+    }
+
     elf_end(e);
     close(fd);
     return 0;
