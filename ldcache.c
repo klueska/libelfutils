@@ -1,6 +1,7 @@
 #include <err.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,8 +12,8 @@
 #define CACHEMAGIC_OLD "ld.so-1.7.0"
 #define CACHEMAGIC_NEW "glibc-ld.so.cache1.1"
 
-#define ALIGN_TYPE(addr, type) \
-    ((void*)(((addr) + __alignof__(type) - 1) & (~(__alignof__(type) - 1))))
+#define ALIGN_TYPE_OFFSET(addr, type) \
+    ((__alignof__(type) - 1) & (~(__alignof__(type) - 1)))
 
 #define FLAGS_ELF    0x00000001
 #define FLAGS_I386   0x00000800
@@ -97,6 +98,19 @@ struct libentry_new
   uint64_t hwcap;       /* Hwcap entry. */
 };
 
+
+bool validatePtr(char *base, uint32_t limit, char *ptr, uint32_t offset)
+{
+    if (ptr + offset < base)
+        return false;
+
+    if (ptr + offset >= base + limit)
+        return false;
+
+    return true;
+}
+
+
 int main(int argc, char **argv)
 {
     FILE *file = fopen(LD_SO_CACHE, "rb");
@@ -130,36 +144,54 @@ int main(int argc, char **argv)
     /* Construct pointers to all of the important regions in the old
      * format: the header, the libentry array, the strtab. */
     char *bufptr = buffer;
+    uint32_t offset = 0;
 
     struct header_old *header_old = (struct header_old*)bufptr;
-    bufptr += sizeof(struct header_old);
+    offset = sizeof(struct header_old);
+    if (!validatePtr(buffer, filelen, bufptr, offset)) {
+        errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
+    }
+    bufptr += offset;
     
     struct libentry_old *libs_old = (struct libentry_old*)bufptr;
-    bufptr += header_old->nlibs * sizeof(struct libentry_old);
+    offset = header_old->nlibs * sizeof(struct libentry_old);
+    if (!validatePtr(buffer, filelen, bufptr, offset)) {
+        errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
+    }
+    bufptr += offset;
 
     char *strtab = (char *)bufptr;
 
-    /* For the new format, the header and all of its library entries
+    /* Assuming we are working with the new format (it is the only
+     * fomat we support), the header and all of its library entries
      * are embedded in the old format's string table. The header
      * itself is aligned on an 8 byte boundary, so we need to align
      * our bufptr here to get it to point to the new header. */
-    bufptr = ALIGN_TYPE((uintptr_t)bufptr, struct header_new);
-
-    /* If we find CACHEMAGIC_NEW at the top of the aligned header,
-     * then we know we are working with the new format. As such, we
-     * need to move the strtab to this aligned address as well. */
-    if (strncmp(bufptr, CACHEMAGIC_NEW, sizeof(CACHEMAGIC_NEW) - 1) == 0) {
-        strtab = bufptr;
+    offset = ALIGN_TYPE_OFFSET((uintptr_t)bufptr, struct header_new);
+    if (!validatePtr(buffer, filelen, bufptr, offset)) {
+        errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
+    bufptr += offset;
 
     /* Construct pointers to all of the important regions in the new
-     * format: the header and the libentry array (we already have a
-     * pointer to the strtab -- it doesn't change). */
+     * format: the header, the libentry array, and the new strtab
+     * (which starts at the same address as the aligned header_new
+     * pointer). */
     struct header_new *header_new = (struct header_new*)bufptr;
-    bufptr += sizeof(struct header_new);
+    offset = sizeof(struct header_new);
+    if (!validatePtr(buffer, filelen, bufptr, offset)) {
+        errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
+    }
+    bufptr += offset;
 
     struct libentry_new *libs_new = (struct libentry_new*)bufptr;
-    bufptr += header_new->nlibs * sizeof(struct libentry_new);
+    offset = header_new->nlibs * sizeof(struct libentry_new);
+    if (!validatePtr(buffer, filelen, bufptr, offset)) {
+        errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
+    }
+    bufptr += offset;
+
+    strtab = (char *)header_new;
 
     /* Adjust bufptr to add on the additional size of the strings
      * contained in the string table. At this point, bufptr should
@@ -176,7 +208,6 @@ int main(int argc, char **argv)
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
 
-    /* Only support the new format. */
     if (strncmp(header_new->magic,
                 CACHEMAGIC_NEW,
                 sizeof(CACHEMAGIC_NEW) - 1) != 0) {
@@ -191,6 +222,7 @@ int main(int argc, char **argv)
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
 
+    /* Validate all string offsets are within the bounds of the strtab. */
     for (int i = 0; i < header_new->nlibs; i++) {
         if (strtab + libs_new[i].key >= bufptr) {
             errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
