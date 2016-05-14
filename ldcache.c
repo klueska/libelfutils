@@ -119,25 +119,31 @@ int main(int argc, char **argv)
     }
 
     if (fseek(file, 0, SEEK_END) == -1) {
+        fclose(file);
         err(EXIT_FAILURE, "fseek() failed");
     }
 
     size_t filelen = ftell(file);
     if (filelen == -1) {
+        fclose(file);
         err(EXIT_FAILURE, "ftell() failed");
     }
 
     if (fseek(file, 0, SEEK_SET) == -1) {
+        fclose(file);
         err(EXIT_FAILURE, "fseek() failed");
     }
 
     char *buffer = malloc(filelen);
     if (buffer == NULL) {
+        fclose(file);
         err(EXIT_FAILURE, "malloc() failed");
     }
 
     size_t ret = fread(buffer, 1, filelen, file);
     if (ret != filelen) {
+        free(buffer);
+        fclose(file);
         err(EXIT_FAILURE, "fread() failed");
     }
 
@@ -149,6 +155,8 @@ int main(int argc, char **argv)
     struct header_old *header_old = (struct header_old*)bufptr;
     offset = sizeof(struct header_old);
     if (!validatePtr(buffer, filelen, bufptr, offset)) {
+        free(buffer);
+        fclose(file);
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
     bufptr += offset;
@@ -156,6 +164,8 @@ int main(int argc, char **argv)
     struct libentry_old *libs_old = (struct libentry_old*)bufptr;
     offset = header_old->nlibs * sizeof(struct libentry_old);
     if (!validatePtr(buffer, filelen, bufptr, offset)) {
+        free(buffer);
+        fclose(file);
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
     bufptr += offset;
@@ -169,6 +179,8 @@ int main(int argc, char **argv)
      * our bufptr here to get it to point to the new header. */
     offset = ALIGN_TYPE_OFFSET((uintptr_t)bufptr, struct header_new);
     if (!validatePtr(buffer, filelen, bufptr, offset)) {
+        free(buffer);
+        fclose(file);
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
     bufptr += offset;
@@ -180,6 +192,8 @@ int main(int argc, char **argv)
     struct header_new *header_new = (struct header_new*)bufptr;
     offset = sizeof(struct header_new);
     if (!validatePtr(buffer, filelen, bufptr, offset)) {
+        free(buffer);
+        fclose(file);
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
     bufptr += offset;
@@ -187,6 +201,8 @@ int main(int argc, char **argv)
     struct libentry_new *libs_new = (struct libentry_new*)bufptr;
     offset = header_new->nlibs * sizeof(struct libentry_new);
     if (!validatePtr(buffer, filelen, bufptr, offset)) {
+        free(buffer);
+        fclose(file);
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
     bufptr += offset;
@@ -199,18 +215,24 @@ int main(int argc, char **argv)
     bufptr += header_new->stringslen;
 
     if ((bufptr - buffer) != filelen) {
+        free(buffer);
+        fclose(file);
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
 
     if (strncmp(header_old->magic,
                 CACHEMAGIC_OLD,
                 sizeof(CACHEMAGIC_OLD) - 1) != 0) {
+        free(buffer);
+        fclose(file);
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
 
     if (strncmp(header_new->magic,
                 CACHEMAGIC_NEW,
                 sizeof(CACHEMAGIC_NEW) - 1) != 0) {
+        free(buffer);
+        fclose(file);
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
 
@@ -219,15 +241,21 @@ int main(int argc, char **argv)
      * know they will never run beyond the end of the file buffer when
      * extracting them. */
     if (*(bufptr - 1) != '\0') {
+        free(buffer);
+        fclose(file);
         errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
     }
 
     /* Validate all string offsets are within the bounds of the strtab. */
     for (int i = 0; i < header_new->nlibs; i++) {
         if (strtab + libs_new[i].key >= bufptr) {
+            free(buffer);
+            fclose(file);
             errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
         }
         if (strtab + libs_new[i].value >= bufptr) {
+            free(buffer);
+            fclose(file);
             errx(EXIT_FAILURE, "error parsing '%s'", LD_SO_CACHE);
         }
     }
